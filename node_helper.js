@@ -1,6 +1,7 @@
 const path = require("path")
 const exec = require("child_process").exec
 const {PythonShell} = require("python-shell")
+const {spawn} = require('child_process');
 
 var NodeHelper = require('node_helper')
 
@@ -41,38 +42,33 @@ module.exports = NodeHelper.create({
   },
 
   job: function(config) {
-    this.config = config
-    var map = this.config.gestureMapFromTo
-    var py = path.resolve(__dirname, "py", "gesture_print.py")
-    var option = {
-      mode: "text",
-      pythonPath:this.config.pythonPath,
-      pythonOptions: ['-u'],
-    }
-    this.shell = new PythonShell(py, option)
-    this.shell.on("message", (message)=>{
-      this.log("[GESTURE] ORIGIN:" + message)
-      var gesture = null
-      gesture = (map.hasOwnProperty(message)) ? map[message] : null
-      if (gesture) {
-        this.gestureProcess(gesture)
-      }
-    })
-    this.shell.on("error", (message)=>{
-      this.shell.end()
-      if (!message.traceback.search("KeyboardInterrupt")) {
-        this.log(message)
-      } else {
-        this.log("Keyboard Interrupted")
-      }
-      this.log("[GESTURE] Gesture script is finished.")
-    })
-    this.shell.on("close", ()=>{
-      setTimeout(()=>{
-        this.log("[GESTURE] Python script is terminated. It will restart soon.")
-        this.job(config)
-      }, 500)
-    })
+    this.config = config;
+    const map = this.config.gestureMapFromTo;
+    const py = path.resolve(__dirname, "py", "gesture_print.py");
+
+    // zamiast PythonShell — użyjemy child_process
+    const args = ['-u', py];
+    const proc = spawn('sudo', [config.pythonPath, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    proc.stdout.on('data', data => {
+      const message = data.toString().trim();
+      this.log("[GESTURE] ORIGIN:" + message);
+      const gesture = map.hasOwnProperty(message) ? map[message] : null;
+      if (gesture) this.gestureProcess(gesture);
+    });
+
+    proc.stderr.on('data', data => {
+      const msg = data.toString();
+      if (!msg.includes('KeyboardInterrupt')) this.log(msg);
+      else this.log("Keyboard Interrupted");
+    });
+
+    proc.on('close', code => {
+      this.log(`[GESTURE] Python script zakończony (kod ${code}). Restart za 0.5s.`);
+      setTimeout(() => this.job(config), 500);
+    });
   },
 
   gestureProcess: function(gesture) {
